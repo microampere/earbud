@@ -1,17 +1,29 @@
 {
   "manifest_version": 3,
-  "name": "Earbud Caption Bridge",
+  "name": "Earbud",
   "version": "1.0",
-  "description": "Streams live captions from Google Meet or Zoom to the Earbud meeting copilot",
+  "description": "Real-time meeting copilot — surfaces follow-up questions while your client speaks",
+  "permissions": ["storage", "sidePanel"],
+  "host_permissions": [
+    "https://meet.google.com/*",
+    "https://*.zoom.us/*",
+    "https://api.anthropic.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
   "content_scripts": [
     {
-      "matches": [
-        "https://meet.google.com/*",
-        "https://*.zoom.us/wc/*",
-        "https://zoom.us/wc/*"
-      ],
+      "matches": ["https://meet.google.com/*", "https://*.zoom.us/wc/*"],
       "js": ["content.js"],
       "run_at": "document_idle"
     }
-  ]
+  ],
+  "side_panel": {
+    "default_path": "sidebar.html"
+  },
+  "options_page": "options.html",
+  "action": {
+    "default_title": "Open Earbud"
+  }
 }

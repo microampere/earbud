@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Earbud</title>
+  <link rel="stylesheet" href="sidebar.css" />
+</head>
+<body>
+
+  <!-- No API key configured -->
+  <div id="screen-nokey" class="screen hidden">
+    <div class="empty-state">
+      <div class="logo">earbud</div>
+      <p class="empty-msg">No API key configured.</p>
+      <button id="btn-open-options" class="btn btn-primary">Open Settings</button>
+    </div>
+  </div>
+
+  <!-- Pre-meeting setup -->
+  <div id="screen-setup" class="screen hidden">
+    <div class="setup-header">
+      <span class="logo">earbud</span>
+      <span class="tagline">Meeting Copilot</span>
+    </div>
+    <form id="setup-form" class="setup-form">
+      <label>Meeting type
+        <select id="input-type">
+          <option value="discovery">Discovery</option>
+          <option value="demo">Demo</option>
+          <option value="QBR">QBR</option>
+          <option value="status update">Status Update</option>
+          <option value="other">Other</option>
+        </select>
+      </label>
+      <label>Client background
+        <textarea id="input-background" rows="2" placeholder="e.g. Acme Corp, mid-market SaaS, ~200 employees"></textarea>
+      </label>
+      <label>Your goals
+        <textarea id="input-goals" rows="2" placeholder="e.g. Qualify for Enterprise tier, understand pain points"></textarea>
+      </label>
+      <label>Topics to cover <span class="optional">(optional)</span>
+        <input type="text" id="input-topics" placeholder="e.g. tooling, team size, budget cycle" />
+      </label>
+      <button type="submit" class="btn btn-primary btn-full">Start Meeting</button>
+    </form>
+  </div>
+
+  <!-- Live session -->
+  <div id="screen-live" class="screen hidden">
+    <header class="live-header">
+      <span class="logo">earbud</span>
+      <span id="live-indicator" class="indicator">● LIVE</span>
+      <div class="header-controls">
+        <span id="live-timer" class="timer">00:00</span>
+        <button id="btn-pause" class="btn-icon" title="Pause (P)">⏸</button>
+        <button id="btn-export" class="btn-icon" title="Export">⬇</button>
+        <button id="btn-stop" class="btn-icon btn-icon-danger" title="End meeting">✕</button>
+      </div>
+    </header>
+
+    <div id="live-status" class="status-bar">Listening...</div>
+
+    <section class="suggestions-section">
+      <div class="section-label">SUGGESTED QUESTIONS</div>
+      <div id="suggestions-list" class="suggestions-list">
+        <p class="empty-hint">Waiting for conversation...</p>
+      </div>
+    </section>
+
+    <section class="transcript-section">
+      <div class="section-label-row">
+        <span class="section-label">TRANSCRIPT</span>
+        <button id="btn-toggle-transcript" class="btn-toggle">▾</button>
+      </div>
+      <div id="transcript-list" class="transcript-list"></div>
+    </section>
+  </div>
+
+  <script src="sidebar.js"></script>
+</body>
+</html>
