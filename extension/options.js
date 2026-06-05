@@ -44,6 +44,7 @@ const keyHint        = document.getElementById('key-hint');
 const modelSelect    = document.getElementById('model');
 const saveBtn        = document.getElementById('save-btn');
 const savedMsg       = document.getElementById('saved-msg');
+const debugToggle    = document.getElementById('debug-toggle');
 
 // Per-provider key cache so switching providers doesn't clear a previously typed key
 const keyCache = { anthropic: '', gemini: '', groq: '' };
@@ -69,7 +70,7 @@ function applyProvider(providerKey, selectedModel) {
 // ── Load saved settings ───────────────────────────────────────────────────────
 
 chrome.storage.local.get(
-  ['provider', 'anthropicKey', 'geminiKey', 'groqKey', 'model'],
+  ['provider', 'anthropicKey', 'geminiKey', 'groqKey', 'model', 'debugMode'],
   (stored) => {
     keyCache.anthropic = stored.anthropicKey || '';
     keyCache.gemini    = stored.geminiKey    || '';
@@ -78,8 +79,21 @@ chrome.storage.local.get(
     const activeProvider = stored.provider || 'anthropic';
     providerSelect.value = activeProvider;
     applyProvider(activeProvider, stored.model);
+
+    setDebugToggle(!!stored.debugMode);
   }
 );
+
+function setDebugToggle(enabled) {
+  debugToggle.setAttribute('aria-pressed', String(enabled));
+  debugToggle.textContent = enabled ? 'On' : 'Off';
+}
+
+debugToggle.addEventListener('click', () => {
+  const next = debugToggle.getAttribute('aria-pressed') !== 'true';
+  setDebugToggle(next);
+  chrome.storage.local.set({ debugMode: next });
+});
 
 // ── Provider switch ───────────────────────────────────────────────────────────
 

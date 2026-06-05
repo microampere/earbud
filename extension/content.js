@@ -16,10 +16,29 @@ const platform = isGoogleMeet ? 'google-meet' : isZoom ? 'zoom' : 'unknown';
 
 console.log(`[Earbud] Loaded on ${platform}`);
 
+function dbg(msg) {
+  console.log('[Earbud]', msg);
+  chrome.runtime.sendMessage({ type: 'debug', message: msg }, () => {
+    if (chrome.runtime.lastError) {
+      console.warn('[Earbud] sendMessage failed:', chrome.runtime.lastError.message);
+    }
+  });
+}
+
+dbg(`content script loaded on ${platform}`);
+
 // ── Selector strategies ───────────────────────────────────────────────────────
 // Tried in order. The first one whose findContainer() returns a non-null element wins.
 
 const GOOGLE_MEET_STRATEGIES = [
+  // ── Captions panel — each child element is one complete speaker turn ──
+  // Emits the previous child when a new one appears (one-statement delay).
+  {
+    name: 'aria-label=Captions',
+    findContainer: () => document.querySelector('[aria-label="Captions"]'),
+    start(container) { startCaptionsPanelObserver(container, this); },
+  },
+
   // ── Known jsname attributes (update these when Meet changes their DOM) ──
   {
     name: 'jsname=YSxPC',
@@ -42,7 +61,7 @@ const GOOGLE_MEET_STRATEGIES = [
   {
     name: 'jsname=dsyhDe',
     findContainer: () => document.querySelector('[jsname="dsyhDe"]'),
-    extractSegment: (node) => ({ speaker: '', text: node.textContent?.trim() || '' }),
+    start(container) { startCaptionsPanelObserver(container, this); },
   },
   {
     name: 'jsname=n8FYJd',
@@ -64,26 +83,9 @@ const GOOGLE_MEET_STRATEGIES = [
     },
   },
 
-  // ── aria-live regions (accessibility attributes — most stable fallback) ──
-  {
-    name: 'aria-live=polite',
-    findContainer: () => {
-      const candidates = [...document.querySelectorAll('[aria-live="polite"]')];
-      // Prefer elements that already contain some text (captions are likely there)
-      return candidates.find(el => el.textContent.trim().length > 5) || candidates[0] || null;
-    },
-    extractSegment: (node) => ({ speaker: '', text: node.textContent?.trim() || '' }),
-  },
-  {
-    name: 'aria-live=assertive',
-    findContainer: () => document.querySelector('[aria-live="assertive"]'),
-    extractSegment: (node) => ({ speaker: '', text: node.textContent?.trim() || '' }),
-  },
-  {
-    name: 'role=log',
-    findContainer: () => document.querySelector('[role="log"]'),
-    extractSegment: (node) => ({ speaker: '', text: node.textContent?.trim() || '' }),
-  },
+  // aria-live / role=log removed — they exist in Meet before captions are enabled and lock in
+  // on the wrong element before the adaptive scan can find the real caption container.
+  // The adaptive scan handles these cases more reliably by requiring speech-like mutations.
 
 ];
 
@@ -98,11 +100,7 @@ const ZOOM_STRATEGIES = [
       return { speaker: speakerEl?.textContent?.trim() || '', text: node.textContent?.trim() || '' };
     },
   },
-  {
-    name: 'aria-live=polite',
-    findContainer: () => document.querySelector('[aria-live="polite"]'),
-    extractSegment: (node) => ({ speaker: '', text: node.textContent?.trim() || '' }),
-  },
+  // aria-live removed — adaptive scan handles unknown DOM more reliably
 ];
 
 const STRATEGIES = isGoogleMeet ? GOOGLE_MEET_STRATEGIES : ZOOM_STRATEGIES;
@@ -114,18 +112,41 @@ window.earbud_debug = function () {
   console.log('Platform:', platform);
   console.log('Active strategy:', activeStrategy?.name || 'none');
   console.log('Adaptive scan active:', adaptiveScanActive);
-  console.log('\nAll aria-live elements:');
-  document.querySelectorAll('[aria-live]').forEach(el => {
-    console.log(' ', el.tagName, el.getAttribute('aria-live'), '|', el.textContent.slice(0, 80));
-  });
-  console.log('\nAll role=log elements:');
-  document.querySelectorAll('[role="log"]').forEach(el => {
-    console.log(' ', el.tagName, '|', el.textContent.slice(0, 80));
-  });
+  console.log('Last caption time:', lastCaptionTime ? new Date(lastCaptionTime).toISOString() : 'never');
+
   console.log('\nKnown jsname elements present:');
   ['YSxPC', 'tgaKEf', 'dsyhDe', 'n8FYJd'].forEach(name => {
     const el = document.querySelector(`[jsname="${name}"]`);
-    console.log(` jsname=${name}:`, el ? 'FOUND — ' + el.textContent.slice(0, 60) : 'not found');
+    if (el) {
+      console.log(` jsname=${name}: FOUND — childCount=${el.children.length} text="${el.textContent.slice(0, 80)}"`);
+    } else {
+      console.log(` jsname=${name}: not found`);
+    }
+  });
+
+  console.log('\naria-label=Captions element:');
+  const captionsEl = document.querySelector('[aria-label="Captions"]') || document.querySelector('[aria-label*="Caption"]');
+  if (captionsEl) {
+    console.log(' FOUND — childCount:', captionsEl.children.length, '| aria-label:', captionsEl.getAttribute('aria-label'));
+    Array.from(captionsEl.children).slice(-3).forEach((child, i) => {
+      const nameEl = child.querySelector('.NWpY1d');
+      const innerDivs = child.querySelectorAll(':scope > div');
+      const textDiv = innerDivs[innerDivs.length - 1];
+      console.log(`  child[-${3 - i}]: speaker="${nameEl?.textContent?.trim()}" text="${textDiv?.textContent?.trim()?.slice(0, 60)}"`);
+    });
+  } else {
+    console.log(' NOT FOUND — try: document.querySelector(\'[aria-label*="caption" i]\')');
+    // Show all elements with aria-label containing "caption" (case-insensitive)
+    document.querySelectorAll('[aria-label]').forEach(el => {
+      if (el.getAttribute('aria-label').toLowerCase().includes('caption')) {
+        console.log('  possible match:', el.tagName, `"${el.getAttribute('aria-label')}"`, 'childCount:', el.children.length);
+      }
+    });
+  }
+
+  console.log('\nAll aria-live elements:');
+  document.querySelectorAll('[aria-live]').forEach(el => {
+    console.log(' ', el.tagName, el.getAttribute('aria-live'), '|', el.textContent.slice(0, 80));
   });
   console.groupEnd();
 };
@@ -146,6 +167,10 @@ let commitTimer = null;
 let pending = { speaker: '', text: '' }; // building caption
 let lastSentText = ''; // last text we actually sent
 let adaptiveScanActive = false;
+let lastCaptionTime = 0; // updated each time a caption is committed
+
+const WATCHDOG_MS = 10_000; // re-probe if no caption received within this window
+let watchdogInterval = null;
 
 // UI-text patterns to ignore (Meet shows keyboard shortcuts in the caption area)
 const UI_TEXT_RE = /^(Turn (on|off)|ctrl\s*\+|shift\s*\+|alt\s*\+|\([a-z]\))/i;
@@ -156,6 +181,7 @@ function commitPending() {
   pending = { speaker: '', text: '' };
   if (!text || text === lastSentText) return;
   lastSentText = text;
+  lastCaptionTime = Date.now();
   console.log(`[Earbud] Caption — ${speaker ? speaker + ': ' : ''}${text}`);
   chrome.runtime.sendMessage({ type: 'caption', speaker, text }, () => void chrome.runtime.lastError);
 }
@@ -195,7 +221,76 @@ function processNode(node, strategy) {
   commitTimer = setTimeout(commitPending, COMMIT_MS);
 }
 
-function startObserving(container, strategy) {
+// ── Captions panel observer ───────────────────────────────────────────────────
+// Each direct child of [aria-label="Captions"] is a complete speaker turn.
+// We emit the PREVIOUS child when a new one arrives — that signals the previous
+// turn is finished and won't receive more words.
+
+// Identify a caption item by structure: direct child of the captions container
+// that has an <img> (speaker avatar) inside it.
+function isCaptionItem(el) {
+  return el.nodeType === Node.ELEMENT_NODE && !!el.querySelector('img');
+}
+
+// Extract speaker + text using structure only — no class names.
+// Speaker: first <span> inside the div that contains the <img>.
+// Text: the direct-child div that has no child elements (pure text node).
+function extractCaptionItem(el) {
+  const divs = Array.from(el.querySelectorAll(':scope > div'));
+  const speakerDiv = divs.find(d => d.querySelector('img'));
+  const textDiv = divs.find(d => d.children.length === 0);
+  return {
+    speaker: speakerDiv?.querySelector('span')?.textContent?.trim() || '',
+    text: textDiv?.textContent?.trim() || '',
+  };
+}
+
+function startCaptionsPanelObserver(container, strategy) {
+  if (observer) observer.disconnect();
+  clearTimeout(commitTimer);
+  pending = { speaker: '', text: '' };
+  activeStrategy = strategy;
+  let flushTimer = null;
+  chrome.runtime.sendMessage({ type: 'captionStatus', active: true, strategy: strategy.name }, () => void chrome.runtime.lastError);
+
+  const existingItems = Array.from(container.children).filter(isCaptionItem);
+  let prevChild = existingItems.length > 0 ? existingItems[existingItems.length - 1] : null;
+  dbg(`panelObserver: container="${container.getAttribute('aria-label')}" children=${container.children.length} captionItems=${existingItems.length}`);
+
+  function emitChild(el) {
+    const { speaker, text } = extractCaptionItem(el);
+    dbg(`emit: speaker="${speaker}" text="${text.slice(0, 60)}"`);
+    if (!text || text === lastSentText) { dbg('skip: empty or duplicate'); return; }
+    lastSentText = text;
+    lastCaptionTime = Date.now();
+    chrome.runtime.sendMessage({ type: 'caption', speaker, text }, () => void chrome.runtime.lastError);
+  }
+
+  observer = new MutationObserver((mutations) => {
+    for (const mutation of mutations) {
+      if (mutation.type !== 'childList') continue;
+      for (const node of mutation.addedNodes) {
+        if (!isCaptionItem(node)) {
+          if (node.nodeType === Node.ELEMENT_NODE) dbg(`skip non-caption child (no img)`);
+          continue;
+        }
+        const { speaker, text } = extractCaptionItem(node);
+        dbg(`caption added: speaker="${speaker}" text="${text.slice(0, 40)}" prevChild=${!!prevChild}`);
+        clearTimeout(flushTimer);
+        if (prevChild) emitChild(prevChild);
+        prevChild = node;
+        // Flush after 5 s of silence — handles the last caption when no new one arrives
+        flushTimer = setTimeout(() => {
+          if (prevChild) { emitChild(prevChild); prevChild = null; }
+        }, 5000);
+      }
+    }
+  });
+
+  observer.observe(container, { childList: true });
+}
+
+function startObserving(containerOrList, strategy) {
   if (observer) observer.disconnect();
   console.log(`[Earbud] Observing with strategy: ${strategy.name}`);
   activeStrategy = strategy;
@@ -215,7 +310,9 @@ function startObserving(container, strategy) {
   });
 
   const config = { subtree: true, childList: true, characterData: true };
-  observer.observe(container, config);
+  // Support observing multiple containers (e.g. all aria-live=polite elements)
+  const containers = Array.isArray(containerOrList) ? containerOrList : [containerOrList];
+  for (const c of containers) observer.observe(c, config);
 }
 
 // ── Adaptive scan ─────────────────────────────────────────────────────────────
@@ -231,26 +328,46 @@ function startAdaptiveScan() {
   const hitCount = new Map();
   const LOCK_AFTER = 3;
 
+  function scoreAdaptiveNode(text, container) {
+    const wordCount = text.split(/\s+/).filter(Boolean).length;
+    if (text.length < 10 || text.length > 400) return false;
+    if (wordCount < 3 || wordCount > 50) return false;
+    if (UI_TEXT_RE.test(text)) return false;
+    return true;
+  }
+
   const adaptiveObserver = new MutationObserver((mutations) => {
     for (const mutation of mutations) {
-      if (mutation.type !== 'characterData') continue;
-      const node = mutation.target;
-      const text = (node.data || '').trim();
+      let text = '';
+      let container = null;
 
-      // Must look like speech: 3–50 words, 10–400 chars, not a UI phrase
-      const wordCount = text.split(/\s+/).filter(Boolean).length;
-      if (text.length < 10 || text.length > 400) continue;
-      if (wordCount < 3 || wordCount > 50) continue;
-      if (UI_TEXT_RE.test(text)) continue;
+      if (mutation.type === 'characterData') {
+        text = (mutation.target.data || '').trim();
+        container = mutation.target.parentElement || document.body;
+      } else if (mutation.type === 'childList') {
+        // Catch span-append pattern: Meet adds word spans one at a time.
+        // Check the parent's accumulated text, not the individual added node.
+        if (mutation.addedNodes.length > 0) {
+          const c = mutation.target;
+          const t = c.textContent.trim();
+          if (scoreAdaptiveNode(t, c)) {
+            text = t;
+            container = c;
+          }
+        }
+      }
 
-      const count = (hitCount.get(node) || 0) + 1;
-      hitCount.set(node, count);
+      if (!text || !container) continue;
+      if (!scoreAdaptiveNode(text, container)) continue;
+
+      // Key by container element so word-by-word appends accumulate on the same node
+      const count = (hitCount.get(container) || 0) + 1;
+      hitCount.set(container, count);
 
       if (count >= LOCK_AFTER) {
         adaptiveObserver.disconnect();
         adaptiveScanActive = false;
 
-        const container = node.parentElement || document.body;
         console.log('[Earbud] Adaptive scan locked on:', container.tagName, (container.className || '').slice(0, 60));
 
         const lockedStrategy = {
@@ -270,6 +387,8 @@ function startAdaptiveScan() {
         };
 
         startObserving(container, lockedStrategy);
+        // Immediately flush whatever text has already accumulated in the container
+        processNode(container, lockedStrategy);
         return;
       }
     }
@@ -277,23 +396,29 @@ function startAdaptiveScan() {
 
   adaptiveObserver.observe(document.body, {
     subtree: true,
-    childList: false,
+    childList: true,
     characterData: true,
   });
 }
 
 function tryStrategies() {
-  if (activeStrategy) return; // already locked on — stop retrying
+  if (activeStrategy) return;
+  dbg(`tryStrategies: checking ${STRATEGIES.length} strategies`);
   for (const strategy of STRATEGIES) {
     const container = strategy.findContainer();
-    if (container) {
-      startObserving(container, strategy);
+    const found = Array.isArray(container) ? container.length > 0 : !!container;
+    dbg(`  ${strategy.name}: ${found ? 'FOUND' : 'not found'}`);
+    if (found) {
+      if (strategy.start) {
+        strategy.start(container);
+      } else {
+        startObserving(container, strategy);
+      }
       return;
     }
   }
-  // No specific strategy matched — fall back to adaptive scan
   startAdaptiveScan();
-  console.log('[Earbud] No caption container found yet — make sure CC is enabled. Run earbud_debug() for diagnostics.');
+  dbg('No caption container found — make sure CC is enabled');
   chrome.runtime.sendMessage({ type: 'captionStatus', active: false, strategy: null }, () => void chrome.runtime.lastError);
   setTimeout(tryStrategies, 5000);
 }
@@ -310,3 +435,19 @@ const rootObserver = new MutationObserver(() => {
 rootObserver.observe(document.body, { childList: true, subtree: false });
 
 setTimeout(tryStrategies, 2000);
+
+// ── Watchdog ──────────────────────────────────────────────────────────────────
+// If we're locked onto a strategy but no caption arrives within WATCHDOG_MS,
+// the container is probably wrong or stale. Reset and re-probe.
+watchdogInterval = setInterval(() => {
+  if (!activeStrategy) return;
+  // Re-probe if: no caption ever received (locked on wrong element), OR captions stopped
+  const stale = lastCaptionTime === 0 || Date.now() - lastCaptionTime > WATCHDOG_MS;
+  if (stale) {
+    console.log('[Earbud] Watchdog: no caption in', WATCHDOG_MS / 1000, 's — re-probing');
+    if (observer) { observer.disconnect(); observer = null; }
+    activeStrategy = null;
+    chrome.runtime.sendMessage({ type: 'captionStatus', active: false, strategy: null }, () => void chrome.runtime.lastError);
+    tryStrategies();
+  }
+}, WATCHDOG_MS);

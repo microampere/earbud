@@ -134,6 +134,8 @@ select {
 
 .btn-icon:hover { color: var(--text); border-color: var(--text); }
 .btn-icon-danger:hover { color: var(--red); border-color: var(--red); }
+.btn-icon-toggle { font-size: 10px; font-weight: 700; letter-spacing: 0.03em; color: var(--green); border-color: var(--green); }
+.btn-icon-toggle.btn-icon-off { color: var(--dim); border-color: var(--border); text-decoration: line-through; }
 
 .btn-toggle {
   background: none;
@@ -222,6 +224,7 @@ select {
 }
 
 .empty-hint { color: var(--dim); font-style: italic; padding-top: 4px; }
+.ai-off-hint { color: var(--dim); font-style: italic; padding-top: 4px; }
 
 .suggestion-item {
   display: flex;
@@ -294,14 +297,58 @@ select {
 }
 
 .transcript-item {
-  color: var(--dim);
-  line-height: 1.5;
-  padding: 2px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
 }
 
-.transcript-item .speaker {
+.transcript-item:last-child { border-bottom: none; }
+
+.speaker-pill {
+  display: inline-block;
+  align-self: flex-start;
+  background: rgba(96, 165, 250, 0.1);
+  border: 1px solid var(--blue);
+  border-radius: 99px;
   color: var(--blue);
+  font-size: 10px;
   font-weight: 600;
+  padding: 1px 8px;
+  line-height: 1.6;
+}
+
+.transcript-text {
+  color: var(--dim);
+  line-height: 1.5;
+}
+
+/* ── Debug log section ────────────────────────────────────────────────── */
+
+.debug-section {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  max-height: 30%;
+  border-top: 1px solid var(--border);
+}
+
+.debug-section .section-label { color: var(--amber); }
+
+.debug-log {
+  overflow-y: auto;
+  padding: 4px 12px 8px;
+  flex: 1;
+}
+
+.debug-line {
+  font-family: 'Cascadia Code', 'Consolas', monospace;
+  font-size: 10px;
+  color: var(--dim);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-all;
 }
 
 /* Scrollbars */

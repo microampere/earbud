@@ -53,6 +53,7 @@
       <span id="live-indicator" class="indicator">● LIVE</span>
       <div class="header-controls">
         <span id="live-timer" class="timer">00:00</span>
+        <button id="btn-suggestions-toggle" class="btn-icon btn-icon-toggle" title="Toggle AI suggestions">AI</button>
         <button id="btn-pause" class="btn-icon" title="Pause (P)">⏸</button>
         <button id="btn-export" class="btn-icon" title="Export">⬇</button>
         <button id="btn-stop" class="btn-icon btn-icon-danger" title="End meeting">✕</button>
@@ -74,6 +75,14 @@
         <button id="btn-toggle-transcript" class="btn-toggle">▾</button>
       </div>
       <div id="transcript-list" class="transcript-list"></div>
+    </section>
+
+    <section class="debug-section hidden" id="debug-section">
+      <div class="section-label-row">
+        <span class="section-label">DEBUG LOG</span>
+        <button id="btn-clear-debug" class="btn-toggle" title="Clear">✕</button>
+      </div>
+      <div id="debug-log" class="debug-log"></div>
     </section>
   </div>
 

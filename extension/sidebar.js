@@ -46,16 +46,20 @@ const els = {
   inputTopics: document.getElementById('input-topics'),
 
   openOptions: document.getElementById('btn-open-options'),
+  suggestionsToggle: document.getElementById('btn-suggestions-toggle'),
   pause: document.getElementById('btn-pause'),
   export: document.getElementById('btn-export'),
   stop: document.getElementById('btn-stop'),
   toggleTranscript: document.getElementById('btn-toggle-transcript'),
+  clearDebug: document.getElementById('btn-clear-debug'),
+  debugSection: document.getElementById('debug-section'),
 
   liveIndicator: document.getElementById('live-indicator'),
   liveTimer: document.getElementById('live-timer'),
   liveStatus: document.getElementById('live-status'),
   suggestionsList: document.getElementById('suggestions-list'),
   transcriptList: document.getElementById('transcript-list'),
+  debugLog: document.getElementById('debug-log'),
 };
 
 // ── State ─────────────────────────────────────────────────────────────────────
@@ -76,9 +80,10 @@ function showScreen(name) {
 // ── Init ──────────────────────────────────────────────────────────────────────
 
 async function init() {
-  const { provider, anthropicKey, geminiKey, groqKey } = await chrome.storage.local.get(
-    ['provider', 'anthropicKey', 'geminiKey', 'groqKey']
+  const { provider, anthropicKey, geminiKey, groqKey, debugMode } = await chrome.storage.local.get(
+    ['provider', 'anthropicKey', 'geminiKey', 'groqKey', 'debugMode']
   );
+  setDebugMode(!!debugMode);
   const keyMap = { anthropic: anthropicKey, gemini: geminiKey, groq: groqKey };
   if (!keyMap[provider || 'anthropic']) { showScreen('nokey'); return; }
 
@@ -90,6 +95,7 @@ async function init() {
     renderTranscript(state.transcript || []);
     setStatus(state.status || 'Listening...');
     setPaused(state.isPaused || false);
+    if (state.debugLog?.length) renderDebugLog(state.debugLog);
   } else {
     showScreen('setup');
   }
@@ -133,10 +139,31 @@ function startLiveUI(context) {
     const s = String(elapsed % 60).padStart(2, '0');
     els.liveTimer.textContent = `${m}:${s}`;
   }, 1000);
+
+  chrome.storage.session.get(['debugLog', 'suggestionsEnabled'], (s) => {
+    console.log('[Sidebar] startLiveUI: debugLog entries:', s.debugLog?.length ?? 0);
+    renderDebugLog(s.debugLog || []);
+    setSuggestionsEnabled(s.suggestionsEnabled !== false);
+  });
+  chrome.storage.local.get(['debugMode'], ({ debugMode }) => setDebugMode(!!debugMode));
 }
 
 function setStatus(text) {
   els.liveStatus.textContent = text;
+}
+
+function setSuggestionsEnabled(enabled) {
+  els.suggestionsToggle.title = enabled ? 'AI suggestions ON — click to disable' : 'AI suggestions OFF — click to enable';
+  els.suggestionsToggle.classList.toggle('btn-icon-off', !enabled);
+  if (!enabled) {
+    els.suggestionsList.innerHTML = '<p class="ai-off-hint">AI mode is off — enable it to see suggested questions.</p>';
+  } else {
+    chrome.storage.session.get(['suggestions'], ({ suggestions }) => renderSuggestions(suggestions || []));
+  }
+}
+
+function setDebugMode(enabled) {
+  els.debugSection.classList.toggle('hidden', !enabled);
 }
 
 function setPaused(paused) {
@@ -176,12 +203,14 @@ els.suggestionsList.addEventListener('click', (e) => {
   chrome.storage.session.get(['suggestions'], ({ suggestions }) => renderSuggestions(suggestions || []));
 });
 
+function transcriptItemInner(speaker, text) {
+  const pill = speaker ? `<span class="speaker-pill">${escapeHtml(speaker)}</span>` : '';
+  return `${pill}<span class="transcript-text">${escapeHtml(text)}</span>`;
+}
+
 function renderTranscript(segments) {
   els.transcriptList.innerHTML = segments
-    .map(s => {
-      const speaker = s.speaker ? `<span class="speaker">[${escapeHtml(s.speaker)}]</span> ` : '';
-      return `<div class="transcript-item">${speaker}${escapeHtml(s.text)}</div>`;
-    })
+    .map(s => `<div class="transcript-item">${transcriptItemInner(s.speaker, s.text)}</div>`)
     .join('');
   els.transcriptList.scrollTop = els.transcriptList.scrollHeight;
 }
@@ -191,13 +220,18 @@ function appendTranscriptItem(speaker, text) {
   if (empty) empty.remove();
   const div = document.createElement('div');
   div.className = 'transcript-item';
-  if (speaker) {
-    div.innerHTML = `<span class="speaker">[${escapeHtml(speaker)}]</span> ${escapeHtml(text)}`;
-  } else {
-    div.textContent = text;
-  }
+  div.innerHTML = transcriptItemInner(speaker, text);
   els.transcriptList.appendChild(div);
   els.transcriptList.scrollTop = els.transcriptList.scrollHeight;
+}
+
+function renderDebugLog(lines) {
+  console.log('[Sidebar] renderDebugLog:', lines.length, 'lines');
+  if (!els.debugLog) { console.error('[Sidebar] els.debugLog is null!'); return; }
+  els.debugLog.innerHTML = lines.length
+    ? lines.map(l => `<div class="debug-line">${escapeHtml(l)}</div>`).join('')
+    : '<div class="debug-line" style="color:#475569">Waiting for logs...</div>';
+  els.debugLog.scrollTop = els.debugLog.scrollHeight;
 }
 
 function escapeHtml(str) {
@@ -211,7 +245,14 @@ function escapeAttr(str) {
   return String(str).replace(/"/g, '&quot;');
 }
 
-// ── Storage change listener (real-time updates from background.js) ────────────
+// ── Storage change listeners ──────────────────────────────────────────────────
+
+// local storage — user preferences changed (e.g. debug mode toggled in options)
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && changes.debugMode !== undefined) {
+    setDebugMode(!!changes.debugMode.newValue);
+  }
+});
 
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== 'session') return;
@@ -223,9 +264,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
       const items = els.transcriptList.querySelectorAll('.transcript-item');
       const lastItem = items[items.length - 1];
       if (lastItem) {
-        lastItem.innerHTML = speaker
-          ? `<span class="speaker">[${escapeHtml(speaker)}]</span> ${escapeHtml(text)}`
-          : escapeHtml(text);
+        lastItem.innerHTML = transcriptItemInner(speaker, text);
       } else {
         appendTranscriptItem(speaker, text);
       }
@@ -242,10 +281,16 @@ chrome.storage.onChanged.addListener((changes, area) => {
     setStatus(changes.status.newValue);
   }
 
-  if (changes.captionDetected !== undefined) {
-    const detected = changes.captionDetected.newValue;
-    els.liveIndicator.textContent = detected ? '● LIVE' : '○ SEARCHING';
-    els.liveIndicator.className = 'indicator' + (detected ? '' : ' waiting');
+  if (changes.captionDetected !== undefined || changes.captionStrategy !== undefined) {
+    chrome.storage.session.get(['captionDetected', 'captionStrategy', 'status'], (s) => {
+      const detected = s.captionDetected;
+      els.liveIndicator.textContent = detected ? '● LIVE' : '○ SEARCHING';
+      els.liveIndicator.className = 'indicator' + (detected ? '' : ' waiting');
+      if (!changes.status) {
+        const stratLabel = s.captionStrategy ? ` (${s.captionStrategy})` : '';
+        setStatus(detected ? `Listening${stratLabel}` : 'Searching for captions — enable CC in the meeting');
+      }
+    });
   }
 
   if (changes.isPaused !== undefined) {
@@ -255,9 +300,25 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (changes.isRunning?.newValue === false) {
     endLiveUI();
   }
+
+  if (changes.debugLog !== undefined) {
+    console.log('[Sidebar] debugLog storage change, entries:', changes.debugLog.newValue?.length);
+    renderDebugLog(changes.debugLog.newValue || []);
+  }
+
+  if (changes.suggestionsEnabled !== undefined) {
+    setSuggestionsEnabled(changes.suggestionsEnabled.newValue !== false);
+  }
 });
 
 // ── Controls ──────────────────────────────────────────────────────────────────
+
+els.suggestionsToggle.addEventListener('click', async () => {
+  const { suggestionsEnabled } = await chrome.storage.session.get('suggestionsEnabled');
+  const next = suggestionsEnabled === false; // toggle
+  await chrome.storage.session.set({ suggestionsEnabled: next });
+  setSuggestionsEnabled(next);
+});
 
 els.pause.addEventListener('click', () => {
   chrome.runtime.sendMessage({ type: isPaused ? 'resume' : 'pause' });
@@ -279,6 +340,11 @@ els.toggleTranscript.addEventListener('click', () => {
 
 els.openOptions.addEventListener('click', () => {
   chrome.runtime.openOptionsPage();
+});
+
+els.clearDebug.addEventListener('click', () => {
+  chrome.storage.session.set({ debugLog: [] });
+  els.debugLog.innerHTML = '';
 });
 
 function endLiveUI() {

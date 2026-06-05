@@ -25,7 +25,13 @@
     "default_path": "sidebar.html"
   },
   "options_page": "options.html",
+  "icons": {
+    "16":  "icon.png",
+    "48":  "icon.png",
+    "128": "icon.png"
+  },
   "action": {
-    "default_title": "Open Earbud"
+    "default_title": "Open Earbud",
+    "default_icon": "icon.png"
   }
 }
