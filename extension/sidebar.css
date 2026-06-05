@@ -224,13 +224,56 @@ select {
 .empty-hint { color: var(--dim); font-style: italic; padding-top: 4px; }
 
 .suggestion-item {
-  color: var(--amber);
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
   line-height: 1.5;
   padding: 6px 0;
   border-bottom: 1px solid var(--border);
 }
 
 .suggestion-item:last-child { border-bottom: none; }
+
+.suggestion-text {
+  flex: 1;
+  color: var(--amber);
+}
+
+.suggestion-item.done .suggestion-text {
+  color: var(--dim);
+  text-decoration: line-through;
+}
+
+.check-btn {
+  flex-shrink: 0;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  width: 18px;
+  height: 18px;
+  color: var(--dim);
+  cursor: pointer;
+  font-size: 10px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: border-color 0.15s, background 0.15s, color 0.15s;
+  padding: 0;
+  margin-top: 2px;
+  font-family: inherit;
+}
+
+.check-btn:hover {
+  border-color: var(--green);
+  color: var(--green);
+}
+
+.check-btn.done {
+  background: var(--green);
+  border-color: var(--green);
+  color: #0f172a;
+}
 
 /* ── Transcript section ───────────────────────────────────────────────── */
 

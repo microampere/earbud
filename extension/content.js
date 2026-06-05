@@ -85,19 +85,6 @@ const GOOGLE_MEET_STRATEGIES = [
     extractSegment: (node) => ({ speaker: '', text: node.textContent?.trim() || '' }),
   },
 
-  // ── Last resort: watch document.body and filter for speech-like text ──
-  {
-    name: 'body-scan (last resort)',
-    findContainer: () => document.body,
-    extractSegment: (node) => {
-      const text = (node.textContent || node.data || '').trim();
-      // Skip short text, nav items, buttons — only pass text that looks like speech
-      if (text.split(/\s+/).length < 4) return { speaker: '', text: '' };
-      // Skip if it looks like UI text (no spaces, all caps, very long single word)
-      if (/^[A-Z\s]+$/.test(text) && text.length < 30) return { speaker: '', text: '' };
-      return { speaker: '', text };
-    },
-  },
 ];
 
 const ZOOM_STRATEGIES = [
@@ -126,6 +113,7 @@ window.earbud_debug = function () {
   console.group('[Earbud] Debug report');
   console.log('Platform:', platform);
   console.log('Active strategy:', activeStrategy?.name || 'none');
+  console.log('Adaptive scan active:', adaptiveScanActive);
   console.log('\nAll aria-live elements:');
   document.querySelectorAll('[aria-live]').forEach(el => {
     console.log(' ', el.tagName, el.getAttribute('aria-live'), '|', el.textContent.slice(0, 80));
@@ -157,6 +145,7 @@ let observer = null;
 let commitTimer = null;
 let pending = { speaker: '', text: '' }; // building caption
 let lastSentText = ''; // last text we actually sent
+let adaptiveScanActive = false;
 
 // UI-text patterns to ignore (Meet shows keyboard shortcuts in the caption area)
 const UI_TEXT_RE = /^(Turn (on|off)|ctrl\s*\+|shift\s*\+|alt\s*\+|\([a-z]\))/i;
@@ -171,15 +160,21 @@ function commitPending() {
   chrome.runtime.sendMessage({ type: 'caption', speaker, text }, () => void chrome.runtime.lastError);
 }
 
+// Strip trailing punctuation before prefix checks.
+// Meet adds "?" or "." mid-stream then keeps building the same text node,
+// so "How?" → "How do I?" would fail a plain startsWith without this.
+const normEnd = s => s.replace(/[?.!,;:]+$/, '');
+
 function processNode(node, strategy) {
   const { speaker, text } = strategy.extractSegment(node);
   if (!text) return;
   if (UI_TEXT_RE.test(text)) return;
-  if (strategy.name === 'body-scan (last resort)' && text.split(/\s+/).length < 4) return;
 
-  // Extension of the last committed text → Meet is adding words to a sent sentence.
-  // Accumulate and re-send the longer version.
-  if (text.startsWith(lastSentText) && lastSentText.length > 0) {
+  // Exact duplicate — skip
+  if (text === lastSentText) return;
+
+  // Extension of the last committed text (Meet revised the same node after we committed)
+  if (lastSentText.length > 0 && text.startsWith(normEnd(lastSentText))) {
     pending = { speaker: speaker || pending.speaker, text };
     clearTimeout(commitTimer);
     commitTimer = setTimeout(commitPending, COMMIT_MS);
@@ -187,7 +182,7 @@ function processNode(node, strategy) {
   }
 
   // Extension of what we're already building → keep accumulating
-  if (text.startsWith(pending.text) || pending.text === '') {
+  if (pending.text === '' || text.startsWith(normEnd(pending.text))) {
     pending = { speaker: speaker || pending.speaker, text };
     clearTimeout(commitTimer);
     commitTimer = setTimeout(commitPending, COMMIT_MS);
@@ -223,7 +218,72 @@ function startObserving(container, strategy) {
   observer.observe(container, config);
 }
 
+// ── Adaptive scan ─────────────────────────────────────────────────────────────
+// When no known selector matches, watch only characterData mutations on the whole
+// page. Text nodes that update repeatedly (3+ times) and look like speech lock in
+// as the caption container — no hardcoded selectors needed.
+
+function startAdaptiveScan() {
+  if (adaptiveScanActive) return;
+  adaptiveScanActive = true;
+  console.log('[Earbud] No known selector matched — starting adaptive scan (characterData only)');
+
+  const hitCount = new Map();
+  const LOCK_AFTER = 3;
+
+  const adaptiveObserver = new MutationObserver((mutations) => {
+    for (const mutation of mutations) {
+      if (mutation.type !== 'characterData') continue;
+      const node = mutation.target;
+      const text = (node.data || '').trim();
+
+      // Must look like speech: 3–50 words, 10–400 chars, not a UI phrase
+      const wordCount = text.split(/\s+/).filter(Boolean).length;
+      if (text.length < 10 || text.length > 400) continue;
+      if (wordCount < 3 || wordCount > 50) continue;
+      if (UI_TEXT_RE.test(text)) continue;
+
+      const count = (hitCount.get(node) || 0) + 1;
+      hitCount.set(node, count);
+
+      if (count >= LOCK_AFTER) {
+        adaptiveObserver.disconnect();
+        adaptiveScanActive = false;
+
+        const container = node.parentElement || document.body;
+        console.log('[Earbud] Adaptive scan locked on:', container.tagName, (container.className || '').slice(0, 60));
+
+        const lockedStrategy = {
+          name: 'adaptive (auto-detected)',
+          findContainer: () => (document.contains(container) ? container : null),
+          extractSegment: (n) => {
+            const t = (n.textContent || n.data || '').trim();
+            // Walk up from container's parent to find a speaker name element
+            // (speaker is typically a sibling or cousin, not a descendant)
+            let speaker = '';
+            for (let el = container.parentElement; el && el !== document.body; el = el.parentElement) {
+              const s = el.querySelector('[jsname="r4nke"]') || el.querySelector('[data-sender-name]');
+              if (s && s.textContent?.trim()) { speaker = s.textContent.trim(); break; }
+            }
+            return { speaker, text: t };
+          },
+        };
+
+        startObserving(container, lockedStrategy);
+        return;
+      }
+    }
+  });
+
+  adaptiveObserver.observe(document.body, {
+    subtree: true,
+    childList: false,
+    characterData: true,
+  });
+}
+
 function tryStrategies() {
+  if (activeStrategy) return; // already locked on — stop retrying
   for (const strategy of STRATEGIES) {
     const container = strategy.findContainer();
     if (container) {
@@ -231,10 +291,11 @@ function tryStrategies() {
       return;
     }
   }
-  console.log('[Earbud] No caption container found — retrying in 3s. Make sure captions are enabled (CC button).');
-  console.log('[Earbud] Run earbud_debug() in this console for diagnostics.');
+  // No specific strategy matched — fall back to adaptive scan
+  startAdaptiveScan();
+  console.log('[Earbud] No caption container found yet — make sure CC is enabled. Run earbud_debug() for diagnostics.');
   chrome.runtime.sendMessage({ type: 'captionStatus', active: false, strategy: null }, () => void chrome.runtime.lastError);
-  setTimeout(tryStrategies, 3000);
+  setTimeout(tryStrategies, 5000);
 }
 
 // Re-probe if the active container disappears (Meet navigating between screens)

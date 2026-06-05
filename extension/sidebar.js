@@ -64,6 +64,7 @@ let meetingStartTime = null;
 let timerInterval = null;
 let transcriptCollapsed = false;
 let isPaused = false;
+const doneSet = new Set(); // tracks which suggestion texts are marked done (local session state)
 
 // ── Screen management ─────────────────────────────────────────────────────────
 
@@ -153,11 +154,27 @@ function renderSuggestions(suggestions) {
     els.suggestionsList.innerHTML = '<p class="empty-hint">Waiting for conversation...</p>';
     return;
   }
-  els.suggestionsList.innerHTML = suggestions
-    .map(q => `<div class="suggestion-item">${escapeHtml(q)}</div>`)
-    .join('');
-  els.suggestionsList.scrollTop = els.suggestionsList.scrollHeight;
+  // Undone questions first, done questions at the bottom (stable sort within each group)
+  const sorted = [...suggestions].sort((a, b) => (doneSet.has(a) ? 1 : 0) - (doneSet.has(b) ? 1 : 0));
+  els.suggestionsList.innerHTML = sorted.map(q => {
+    const done = doneSet.has(q);
+    return `<div class="suggestion-item${done ? ' done' : ''}" data-q="${escapeAttr(q)}">` +
+      `<span class="suggestion-text">${escapeHtml(q)}</span>` +
+      `<button class="check-btn${done ? ' done' : ''}" title="${done ? 'Unmark' : 'Mark done'}">✓</button>` +
+      `</div>`;
+  }).join('');
+  // Only auto-scroll if no items are done yet (don't yank scroll position mid-meeting)
+  if (!doneSet.size) els.suggestionsList.scrollTop = els.suggestionsList.scrollHeight;
 }
+
+els.suggestionsList.addEventListener('click', (e) => {
+  const btn = e.target.closest('.check-btn');
+  if (!btn) return;
+  const q = btn.closest('.suggestion-item')?.dataset?.q;
+  if (!q) return;
+  if (doneSet.has(q)) doneSet.delete(q); else doneSet.add(q);
+  chrome.storage.session.get(['suggestions'], ({ suggestions }) => renderSuggestions(suggestions || []));
+});
 
 function renderTranscript(segments) {
   els.transcriptList.innerHTML = segments
@@ -190,14 +207,31 @@ function escapeHtml(str) {
     .replace(/>/g, '&gt;');
 }
 
+function escapeAttr(str) {
+  return String(str).replace(/"/g, '&quot;');
+}
+
 // ── Storage change listener (real-time updates from background.js) ────────────
 
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== 'session') return;
 
   if (changes.latestCaption?.newValue) {
-    const { speaker, text } = changes.latestCaption.newValue;
-    appendTranscriptItem(speaker, text);
+    const { speaker, text, isUpdate } = changes.latestCaption.newValue;
+    if (isUpdate) {
+      // Replace the last transcript item in-place — caption was extended, not new
+      const items = els.transcriptList.querySelectorAll('.transcript-item');
+      const lastItem = items[items.length - 1];
+      if (lastItem) {
+        lastItem.innerHTML = speaker
+          ? `<span class="speaker">[${escapeHtml(speaker)}]</span> ${escapeHtml(text)}`
+          : escapeHtml(text);
+      } else {
+        appendTranscriptItem(speaker, text);
+      }
+    } else {
+      appendTranscriptItem(speaker, text);
+    }
   }
 
   if (changes.suggestions?.newValue) {
@@ -250,6 +284,7 @@ els.openOptions.addEventListener('click', () => {
 function endLiveUI() {
   clearInterval(timerInterval);
   meetingStartTime = null;
+  doneSet.clear();
   showScreen('setup');
 }
 

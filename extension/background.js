@@ -6,6 +6,9 @@ const TRIGGER_WORDS = 50;
 const TRIGGER_SECS = 30;
 const WINDOW_SEGMENTS = 30;
 
+// Strip trailing punctuation so "How?" is treated as a prefix of "How do I?"
+const normEnd = s => s.replace(/[?.!,;:]+$/, '');
+
 // ── Setup ────────────────────────────────────────────────────────────────────
 
 chrome.runtime.onInstalled.addListener(() => {
@@ -91,12 +94,33 @@ async function handleCaption(speaker, text) {
   const state = await getState();
   if (!state.isRunning || state.isPaused) return;
 
-  const segment = { speaker, text, ts: Date.now() };
-  const transcript = [...(state.transcript || []), segment];
-  const wordsSinceLastCall = (state.wordsSinceLastCall || 0) + text.split(' ').length;
+  const transcript = [...(state.transcript || [])];
+  const last = transcript[transcript.length - 1];
+
+  // Determine whether this caption extends the last one or is genuinely new.
+  // "How?" committed early, then "How do I make this?" arrives later — that's an
+  // extension, not a new entry. We update the last segment rather than appending.
+  let isUpdate = false;
+  if (last && text !== last.text) {
+    const lastNorm = normEnd(last.text);
+    const sameOrNoSpeaker = !speaker || !last.speaker || speaker === last.speaker;
+    if (sameOrNoSpeaker && lastNorm.length > 3 && text.startsWith(lastNorm)) {
+      transcript[transcript.length - 1] = { speaker: speaker || last.speaker, text, ts: Date.now() };
+      isUpdate = true;
+    }
+  }
+
+  if (!isUpdate) {
+    if (last && text === last.text) return; // exact duplicate — discard
+    transcript.push({ speaker, text, ts: Date.now() });
+  }
+
+  // Only count new words toward the LLM trigger, not updates to the same sentence
+  const wordsAdded = isUpdate ? 0 : text.split(/\s+/).filter(Boolean).length;
+  const wordsSinceLastCall = (state.wordsSinceLastCall || 0) + wordsAdded;
   const lastCallTime = state.lastCallTime || Date.now();
 
-  await patchState({ transcript, wordsSinceLastCall, latestCaption: segment });
+  await patchState({ transcript, wordsSinceLastCall, latestCaption: { speaker, text, isUpdate } });
 
   const elapsedSecs = (Date.now() - lastCallTime) / 1000;
   if (wordsSinceLastCall >= TRIGGER_WORDS || elapsedSecs >= TRIGGER_SECS) {
