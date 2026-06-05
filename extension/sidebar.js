@@ -75,8 +75,11 @@ function showScreen(name) {
 // ── Init ──────────────────────────────────────────────────────────────────────
 
 async function init() {
-  const { apiKey } = await chrome.storage.local.get('apiKey');
-  if (!apiKey) { showScreen('nokey'); return; }
+  const { provider, anthropicKey, geminiKey, groqKey } = await chrome.storage.local.get(
+    ['provider', 'anthropicKey', 'geminiKey', 'groqKey']
+  );
+  const keyMap = { anthropic: anthropicKey, gemini: geminiKey, groq: groqKey };
+  if (!keyMap[provider || 'anthropic']) { showScreen('nokey'); return; }
 
   // Restore live session if one is in progress
   const state = await chrome.storage.session.get(null);
@@ -205,6 +208,12 @@ chrome.storage.onChanged.addListener((changes, area) => {
     setStatus(changes.status.newValue);
   }
 
+  if (changes.captionDetected !== undefined) {
+    const detected = changes.captionDetected.newValue;
+    els.liveIndicator.textContent = detected ? '● LIVE' : '○ SEARCHING';
+    els.liveIndicator.className = 'indicator' + (detected ? '' : ' waiting');
+  }
+
   if (changes.isPaused !== undefined) {
     setPaused(changes.isPaused.newValue);
   }
@@ -230,8 +239,7 @@ els.export.addEventListener('click', exportSession);
 
 els.toggleTranscript.addEventListener('click', () => {
   transcriptCollapsed = !transcriptCollapsed;
-  document.querySelector('.transcript-section').style.display =
-    transcriptCollapsed ? 'none' : '';
+  els.transcriptList.style.display = transcriptCollapsed ? 'none' : '';
   els.toggleTranscript.textContent = transcriptCollapsed ? '▸' : '▾';
 });
 
