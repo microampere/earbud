@@ -1,0 +1,17 @@
+{
+  "manifest_version": 3,
+  "name": "Earbud Caption Bridge",
+  "version": "1.0",
+  "description": "Streams live captions from Google Meet or Zoom to the Earbud meeting copilot",
+  "content_scripts": [
+    {
+      "matches": [
+        "https://meet.google.com/*",
+        "https://*.zoom.us/wc/*",
+        "https://zoom.us/wc/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
