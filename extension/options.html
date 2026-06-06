@@ -48,6 +48,21 @@
     button:hover { opacity: 0.85; }
     #saved-msg { color: var(--green); font-size: 13px; opacity: 0; transition: opacity 0.3s; }
     #saved-msg.visible { opacity: 1; }
+    .btn-test {
+      background: transparent; border: 1px solid var(--border);
+      color: var(--dim); font-weight: 500;
+    }
+    .btn-test:hover { border-color: var(--blue); color: var(--blue); opacity: 1; }
+    .btn-test:disabled { opacity: 0.4; cursor: not-allowed; }
+    #test-result {
+      font-size: 13px; margin-top: 8px; line-height: 1.5;
+      padding: 8px 12px; border-radius: var(--radius); display: none;
+      white-space: pre-wrap; word-break: break-word;
+    }
+    #test-result.loading { display: block; color: var(--dim); background: var(--surface); }
+    #test-result.success { display: block; color: var(--green); background: #0d2218; border: 1px solid #166534; }
+    #test-result.error   { display: block; color: #f87171; background: #1f0d0d; border: 1px solid #7f1d1d; }
+    #test-result.empty   { display: block; color: var(--amber); background: #1f1708; border: 1px solid #78350f; }
     .footer { margin-top: 32px; color: var(--dim); font-size: 12px; line-height: 1.6; }
     .toggle-row { display: flex; align-items: center; gap: 10px; }
     .toggle-label { font-size: 14px; color: var(--text); }
@@ -87,6 +102,11 @@
   <div class="field">
     <label for="model">Model</label>
     <select id="model"></select>
+  </div>
+
+  <div class="field">
+    <button type="button" id="test-btn" class="btn-test">Test Connection</button>
+    <div id="test-result"></div>
   </div>
 
   <hr />

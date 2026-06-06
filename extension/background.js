@@ -42,37 +42,95 @@ async function clearMeetingState() {
   });
 }
 
+// ── Test connection data ──────────────────────────────────────────────────────
+
+const TEST_SYSTEM_PROMPT = `You are a meeting intelligence assistant. Output follow-up questions the user should ask, one per line, prefixed with "→ ". Only output questions when genuinely useful. Silence is the default.`;
+
+const TEST_USER_MSG = `Recent transcript:
+
+[Alex]: We've been struggling with our current tooling — the team spends a lot of time on manual work.
+[Jordan]: What's your timeline for making a change?
+[Alex]: Probably sometime next quarter, maybe sooner if the right solution comes along.
+[Jordan]: And do you have a budget in mind for this?
+[Alex]: We haven't really locked that down yet.`;
+
+async function handleTestConnection(msg) {
+  const { provider, key, model, ollamaUrl } = msg;
+  try {
+    let text = '';
+    if (provider === 'anthropic') text = await callAnthropic(key, model, TEST_SYSTEM_PROMPT, TEST_USER_MSG);
+    if (provider === 'gemini')    text = await callGemini(key, model, TEST_SYSTEM_PROMPT, TEST_USER_MSG);
+    if (provider === 'ollama')    text = await callOllama(model, TEST_SYSTEM_PROMPT, TEST_USER_MSG, ollamaUrl);
+    return { ok: true, text };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
 // ── Message handler ──────────────────────────────────────────────────────────
 
-chrome.runtime.onMessage.addListener((msg) => {
-  if (msg.type === 'caption')       { handleCaption(msg.speaker, msg.text); }
-  if (msg.type === 'start')         { handleStart(msg.context, msg.systemPrompt); }
-  if (msg.type === 'stop')          { handleStop(); }
-  if (msg.type === 'pause')         { handlePause(); }
-  if (msg.type === 'resume')        { handleResume(); }
-  if (msg.type === 'captionStatus') { handleCaptionStatus(msg.active, msg.strategy); }
-  if (msg.type === 'debug')         { handleDebug(msg.message); }
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  (async () => {
+    if (msg.type === 'testConnection') {
+      sendResponse(await handleTestConnection(msg));
+      return;
+    }
+    try {
+      if (msg.type === 'caption')       await handleCaption(msg.speaker, msg.text);
+      if (msg.type === 'start')         await handleStart(msg.context, msg.systemPrompt);
+      if (msg.type === 'stop')          await handleStop();
+      if (msg.type === 'pause')         await handlePause();
+      if (msg.type === 'resume')        await handleResume();
+      if (msg.type === 'captionStatus') await handleCaptionStatus(msg.active, msg.strategy);
+      if (msg.type === 'debug')         await handleDebug(msg.message);
+    } finally {
+      sendResponse();
+    }
+  })();
+  return true; // keep port open so service worker stays alive until async work finishes
+});
+
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === 'keepalive') {
+    chrome.storage.session.get('isRunning');
+  }
 });
 
 async function handleDebug(message) {
-  console.log('[BG] debug:', message);
+  await writeLog(message);
+}
+
+async function bgLog(message) {
+  await writeLog(`[AI agent] ${message}`);
+}
+
+async function writeLog(line) {
   const { debugLog = [] } = await chrome.storage.session.get('debugLog');
   const ts = new Date().toISOString().slice(11, 23);
-  debugLog.push(`${ts}  ${message}`);
+  debugLog.push(`${ts}  ${line}`);
   if (debugLog.length > 150) debugLog.splice(0, debugLog.length - 150);
   await chrome.storage.session.set({ debugLog });
-  console.log('[BG] debugLog saved, length:', debugLog.length);
 }
 
 // ── Meeting lifecycle ────────────────────────────────────────────────────────
 
+async function setExtensionIcon(active) {
+  try {
+    await chrome.action.setIcon({ path: active ? 'icon_active.png' : 'icon.png' });
+  } catch (e) {
+    console.error('[bg] setExtensionIcon failed:', e, e?.name, e?.message);
+  }
+}
+
 async function handleStart(context, systemPrompt) {
+  chrome.alarms.create('keepalive', { periodInMinutes: 0.5 });
   await chrome.storage.session.set({
     isRunning: true,
     isPaused: false,
     transcript: [],
     suggestions: [],
     status: 'Listening...',
+    llmStatus: 'idle',
     systemPrompt,
     wordsSinceLastCall: 0,
     lastCallTime: Date.now(),
@@ -80,9 +138,12 @@ async function handleStart(context, systemPrompt) {
     latestCaption: null,
     suggestionsEnabled: false,
   });
+  await setExtensionIcon(true);
 }
 
 async function handleStop() {
+  chrome.alarms.clear('keepalive');
+  await setExtensionIcon(false);
   await patchState({ isRunning: false, isPaused: false, status: 'Ready' });
 }
 
@@ -150,7 +211,9 @@ async function handleCaption(speaker, text) {
   await patchState({ transcript, wordsSinceLastCall, latestCaption: { speaker, text, isUpdate } });
 
   const elapsedSecs = (now - lastCallTime) / 1000;
+  await bgLog(`trigger check: words=${wordsSinceLastCall}/${TRIGGER_WORDS} elapsed=${elapsedSecs.toFixed(1)}s/${TRIGGER_SECS}s`);
   if (wordsSinceLastCall >= TRIGGER_WORDS || elapsedSecs >= TRIGGER_SECS) {
+    await bgLog(`LLM trigger: reason=${wordsSinceLastCall >= TRIGGER_WORDS ? 'words' : 'time'} suggestionsEnabled=${state.suggestionsEnabled}`);
     await patchState({ wordsSinceLastCall: 0, lastCallTime: now });
     if (state.suggestionsEnabled === true) {
       await callLLM(state.systemPrompt, transcript);
@@ -167,6 +230,7 @@ async function callLLM(systemPrompt, transcript) {
   const provider = settings.provider || 'anthropic';
   const keyMap = { anthropic: settings.anthropicKey, gemini: settings.geminiKey };
   const key = keyMap[provider];
+  await bgLog(`callLLM: provider=${provider} model=${settings.model} segments=${Math.min(transcript.length, WINDOW_SEGMENTS)}`);
 
   if (provider !== 'ollama' && !key) {
     await patchState({ status: 'No API key — open Settings' });
@@ -178,7 +242,8 @@ async function callLLM(systemPrompt, transcript) {
     .map(s => (s.speaker ? `[${s.speaker}]: ${s.text}` : s.text))
     .join('\n');
 
-  await patchState({ status: 'Thinking...' });
+  await bgLog(`request:\n${userMsg}`);
+  await patchState({ status: 'Thinking...', llmStatus: 'thinking' });
 
   try {
     let text = '';
@@ -186,13 +251,22 @@ async function callLLM(systemPrompt, transcript) {
     if (provider === 'gemini')    text = await callGemini(key, settings.model, systemPrompt, userMsg);
     if (provider === 'ollama')    text = await callOllama(settings.model, systemPrompt, userMsg, settings.ollamaUrl);
 
+    await bgLog(`response:\n${text || '(empty)'}`);
     const newQuestions = text.split('\n').map(l => l.trim()).filter(l => l.startsWith('→'));
+    await bgLog(`questions parsed: ${newQuestions.length}${newQuestions.length ? ' ' + newQuestions.join(' | ') : ''}`);
+
     if (newQuestions.length > 0) {
       const state = await getState();
       await patchState({ suggestions: [...(state.suggestions || []), ...newQuestions] });
+    } else {
+      await patchState({ llmStatus: 'none' });
     }
   } catch (e) {
-    await patchState({ status: `Error: ${e.message}` });
+    await bgLog(`error: ${e.message}`);
+    const status = /403|401|Unauthorized|Forbidden/.test(e.message)
+      ? 'API key error — open Settings'
+      : `AI error: ${e.message}`;
+    await patchState({ status, llmStatus: 'none' });
     return;
   }
 
@@ -200,6 +274,16 @@ async function callLLM(systemPrompt, transcript) {
 }
 
 // ── Provider implementations ──────────────────────────────────────────────────
+
+async function parseJsonResponse(res) {
+  const raw = await res.text();
+  if (!raw) throw new Error(`HTTP ${res.status}: empty response`);
+  try {
+    return JSON.parse(raw);
+  } catch {
+    throw new Error(`HTTP ${res.status}: invalid JSON — ${raw.slice(0, 120)}`);
+  }
+}
 
 async function callAnthropic(key, model, systemPrompt, userMsg) {
   const res = await fetch('https://api.anthropic.com/v1/messages', {
@@ -216,7 +300,7 @@ async function callAnthropic(key, model, systemPrompt, userMsg) {
       messages: [{ role: 'user', content: userMsg }],
     }),
   });
-  const data = await res.json();
+  const data = await parseJsonResponse(res);
   if (!res.ok) throw new Error(data.error?.message || `HTTP ${res.status}`);
   return data.content?.[0]?.text || '';
 }
@@ -235,7 +319,7 @@ async function callGemini(key, model, systemPrompt, userMsg) {
       }),
     }
   );
-  const data = await res.json();
+  const data = await parseJsonResponse(res);
   if (!res.ok) throw new Error(data.error?.message || `HTTP ${res.status}`);
   return data.candidates?.[0]?.content?.parts?.[0]?.text || '';
 }
@@ -254,7 +338,7 @@ async function callOllama(model, systemPrompt, userMsg, baseUrl) {
       ],
     }),
   });
-  const data = await res.json();
+  const data = await parseJsonResponse(res);
   if (!res.ok) throw new Error(data.error?.message || `HTTP ${res.status}`);
   return data.choices?.[0]?.message?.content || '';
 }

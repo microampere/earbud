@@ -247,7 +247,7 @@ select {
   text-decoration: line-through;
 }
 
-.check-btn {
+.check-btn, .dismiss-btn {
   flex-shrink: 0;
   background: none;
   border: 1px solid var(--border);
@@ -261,7 +261,7 @@ select {
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: border-color 0.15s, background 0.15s, color 0.15s;
+  transition: border-color 0.15s, background 0.15s, color 0.15s, opacity 0.15s;
   padding: 0;
   margin-top: 2px;
   font-family: inherit;
@@ -278,14 +278,42 @@ select {
   color: #0f172a;
 }
 
+.dismiss-btn {
+  border-color: transparent;
+  opacity: 0;
+}
+
+.suggestion-item:hover .dismiss-btn { opacity: 1; }
+
+.dismiss-btn:hover {
+  border-color: var(--red);
+  color: var(--red);
+  opacity: 1;
+}
+
+/* ── Resize handles ───────────────────────────────────────────────────── */
+
+.resize-handle {
+  height: 5px;
+  background: var(--border);
+  cursor: ns-resize;
+  flex-shrink: 0;
+  transition: background 0.15s;
+  user-select: none;
+}
+
+.resize-handle:hover, .resize-handle.dragging {
+  background: var(--blue);
+}
+
 /* ── Transcript section ───────────────────────────────────────────────── */
 
 .transcript-section {
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
-  max-height: 35%;
-  border-top: 1px solid var(--border);
+  height: 35%;
+  min-height: 32px;
 }
 
 .transcript-section .section-label { color: var(--blue); }
@@ -330,9 +358,12 @@ select {
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
-  max-height: 30%;
-  border-top: 1px solid var(--border);
+  height: 30%;
+  min-height: 32px;
 }
+
+.debug-section.minimized .debug-log { display: none; }
+.debug-section.minimized { height: auto; }
 
 .debug-section .section-label { color: var(--amber); }
 

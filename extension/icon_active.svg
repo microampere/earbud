@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- Active state: maroon rounded square -->
+  <rect width="512" height="512" rx="96" fill="#991b1b"/>
+
+  <!-- Earbud outer body -->
+  <ellipse cx="256" cy="208" rx="118" ry="112" fill="#ffffff"/>
+
+  <!-- Speaker grille: maroon ring + white centre dot -->
+  <circle cx="256" cy="208" r="56" fill="#991b1b"/>
+  <circle cx="256" cy="208" r="18" fill="#ffffff"/>
+
+  <!-- Stem -->
+  <rect x="220" y="292" width="72" height="136" rx="36" fill="#ffffff"/>
+
+  <!-- Mic indicator dot on stem -->
+  <circle cx="256" cy="378" r="11" fill="#991b1b"/>
+</svg>

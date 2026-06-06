@@ -18,11 +18,7 @@ console.log(`[Earbud] Loaded on ${platform}`);
 
 function dbg(msg) {
   console.log('[Earbud]', msg);
-  chrome.runtime.sendMessage({ type: 'debug', message: msg }, () => {
-    if (chrome.runtime.lastError) {
-      console.warn('[Earbud] sendMessage failed:', chrome.runtime.lastError.message);
-    }
-  });
+  chrome.runtime.sendMessage({ type: 'debug', message: msg }, () => void chrome.runtime.lastError);
 }
 
 dbg(`content script loaded on ${platform}`);
@@ -255,12 +251,12 @@ function startCaptionsPanelObserver(container, strategy) {
 
   const existingItems = Array.from(container.children).filter(isCaptionItem);
   let prevChild = existingItems.length > 0 ? existingItems[existingItems.length - 1] : null;
-  dbg(`panelObserver: container="${container.getAttribute('aria-label')}" children=${container.children.length} captionItems=${existingItems.length}`);
+  dbg(`[caption listener] container="${container.getAttribute('aria-label')}" children=${container.children.length} captionItems=${existingItems.length}`);
 
   function emitChild(el) {
     const { speaker, text } = extractCaptionItem(el);
-    dbg(`emit: speaker="${speaker}" text="${text.slice(0, 60)}"`);
-    if (!text || text === lastSentText) { dbg('skip: empty or duplicate'); return; }
+    dbg(`[caption listener] emit: speaker="${speaker}" text="${text.slice(0, 60)}"`);
+    if (!text || text === lastSentText) { dbg('[caption listener] skip: empty or duplicate'); return; }
     lastSentText = text;
     lastCaptionTime = Date.now();
     chrome.runtime.sendMessage({ type: 'caption', speaker, text }, () => void chrome.runtime.lastError);
@@ -271,11 +267,11 @@ function startCaptionsPanelObserver(container, strategy) {
       if (mutation.type !== 'childList') continue;
       for (const node of mutation.addedNodes) {
         if (!isCaptionItem(node)) {
-          if (node.nodeType === Node.ELEMENT_NODE) dbg(`skip non-caption child (no img)`);
+          if (node.nodeType === Node.ELEMENT_NODE) dbg(`[caption listener] skip non-caption child (no img)`);
           continue;
         }
         const { speaker, text } = extractCaptionItem(node);
-        dbg(`caption added: speaker="${speaker}" text="${text.slice(0, 40)}" prevChild=${!!prevChild}`);
+        dbg(`[caption listener] caption added: speaker="${speaker}" text="${text.slice(0, 40)}" prevChild=${!!prevChild}`);
         clearTimeout(flushTimer);
         if (prevChild) emitChild(prevChild);
         prevChild = node;

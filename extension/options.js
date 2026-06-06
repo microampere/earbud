@@ -46,6 +46,8 @@ const modelSelect     = document.getElementById('model');
 const saveBtn         = document.getElementById('save-btn');
 const savedMsg        = document.getElementById('saved-msg');
 const debugToggle     = document.getElementById('debug-toggle');
+const testBtn         = document.getElementById('test-btn');
+const testResult      = document.getElementById('test-result');
 
 // Per-provider key cache so switching providers doesn't clear a previously typed key
 const keyCache = { anthropic: '', gemini: '' };
@@ -129,6 +131,65 @@ keyInput.addEventListener('input', () => {
 
 ollamaUrlInput.addEventListener('change', () => {
   if (providerSelect.value === 'ollama') applyProvider('ollama', modelSelect.value);
+});
+
+// ── Test Connection ───────────────────────────────────────────────────────────
+
+function showTestResult(state, message) {
+  testResult.className = state;
+  testResult.textContent = message;
+}
+
+testBtn.addEventListener('click', () => {
+  const provider  = providerSelect.value;
+  const key       = provider !== 'ollama' ? keyInput.value.trim() : '';
+  const model     = modelSelect.value;
+  const ollamaUrl = ollamaUrlInput.value.trim();
+
+  if (provider !== 'ollama' && !key) {
+    showTestResult('error', 'No API key entered.');
+    return;
+  }
+
+  testBtn.disabled = true;
+  showTestResult('loading', 'Testing connection…');
+
+  chrome.runtime.sendMessage(
+    { type: 'testConnection', provider, key, model, ollamaUrl },
+    (response) => {
+      testBtn.disabled = false;
+      if (!response) {
+        showTestResult('error', 'No response from background. Try reloading the extension.');
+        return;
+      }
+      if (response.ok) {
+        const suggestion = (response.text || '')
+          .split('\n').map(l => l.trim()).find(l => l.startsWith('→'));
+        const detail = suggestion ? `\n${suggestion}` : '';
+        showTestResult('success', `Connected! Model responded successfully.${detail}`);
+      } else if (provider === 'ollama') {
+        const isUnreachable = /ECONNREFUSED|Failed to fetch|NetworkError|Load failed/i.test(response.error);
+        const is403 = /403|Forbidden/i.test(response.error);
+        const displayUrl = ollamaUrlInput.value.trim() || 'http://localhost:11434';
+        let hint = '';
+        if (isUnreachable) {
+          hint = ` — make sure Ollama is running at ${displayUrl}`;
+        } else if (is403) {
+          hint = '\n\nOllama is blocking requests from this extension. Fix:\n' +
+            '1. Open Environment Variables (Windows Key → search "Environment Variables" → click "Environment Variables…")\n' +
+            '2. Under User variables, click New… and enter:\n' +
+            '   Name:  OLLAMA_ORIGINS\n' +
+            '   Value: chrome-extension://*\n' +
+            '3. Click OK on all windows, then right-click the Ollama tray icon → Quit and relaunch.';
+        }
+        showTestResult('error', `${response.error}${hint}`);
+      } else {
+        const isAuthError = /403|401|Unauthorized|Forbidden|api.?key/i.test(response.error);
+        const hint = isAuthError ? ' — check that your key is correct and active' : '';
+        showTestResult('error', `${response.error}${hint}`);
+      }
+    }
+  );
 });
 
 // ── Save ──────────────────────────────────────────────────────────────────────
