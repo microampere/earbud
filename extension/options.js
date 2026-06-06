@@ -22,59 +22,80 @@ const PROVIDERS = {
     ],
     defaultModel: 'gemini-flash-latest',
   },
-  groq: {
-    keyLabel: 'Groq API Key',
-    keyPlaceholder: 'gsk_...',
-    keyHint: 'Get a free key at <a href="https://console.groq.com" target="_blank">console.groq.com</a>',
-    storageKey: 'groqKey',
+  ollama: {
+    keyLabel: null,
+    keyPlaceholder: null,
+    keyHint: null,
+    storageKey: null,
     models: [
-      { value: 'llama-3.3-70b-versatile', label: 'llama-3.3-70b — best quality, free' },
-      { value: 'llama-3.1-8b-instant',    label: 'llama-3.1-8b-instant — fastest, free' },
-      { value: 'mixtral-8x7b-32768',      label: 'mixtral-8x7b — good quality, free' },
-      { value: 'gemma2-9b-it',            label: 'gemma2-9b — Google model on Groq, free' },
+      { value: 'mistral:7b',          label: 'mistral:7b' },
+      { value: 'deepseek-coder:6.7b', label: 'deepseek-coder:6.7b' },
     ],
-    defaultModel: 'llama-3.3-70b-versatile',
+    defaultModel: 'mistral:7b',
   },
 };
 
-const providerSelect = document.getElementById('provider');
-const keyInput       = document.getElementById('api-key');
-const keyLabel       = document.getElementById('key-label');
-const keyHint        = document.getElementById('key-hint');
-const modelSelect    = document.getElementById('model');
-const saveBtn        = document.getElementById('save-btn');
-const savedMsg       = document.getElementById('saved-msg');
-const debugToggle    = document.getElementById('debug-toggle');
+const providerSelect  = document.getElementById('provider');
+const keyInput        = document.getElementById('api-key');
+const keyLabel        = document.getElementById('key-label');
+const keyHint         = document.getElementById('key-hint');
+const apiKeyField     = document.getElementById('api-key-field');
+const ollamaUrlField  = document.getElementById('ollama-url-field');
+const ollamaUrlInput  = document.getElementById('ollama-url');
+const modelSelect     = document.getElementById('model');
+const saveBtn         = document.getElementById('save-btn');
+const savedMsg        = document.getElementById('saved-msg');
+const debugToggle     = document.getElementById('debug-toggle');
 
 // Per-provider key cache so switching providers doesn't clear a previously typed key
-const keyCache = { anthropic: '', gemini: '', groq: '' };
+const keyCache = { anthropic: '', gemini: '' };
 
 function applyProvider(providerKey, selectedModel) {
+  const isOllama = providerKey === 'ollama';
+  apiKeyField.style.display    = isOllama ? 'none' : '';
+  ollamaUrlField.style.display = isOllama ? '' : 'none';
+
+  if (!isOllama) {
+    const cfg = PROVIDERS[providerKey];
+    keyLabel.textContent = cfg.keyLabel;
+    keyInput.placeholder = cfg.keyPlaceholder;
+    keyHint.innerHTML    = cfg.keyHint;
+    keyInput.value       = keyCache[providerKey] || '';
+  }
+
   const cfg = PROVIDERS[providerKey];
-
-  keyLabel.textContent = cfg.keyLabel;
-  keyInput.placeholder = cfg.keyPlaceholder;
-  keyHint.innerHTML    = cfg.keyHint;
-  keyInput.value       = keyCache[providerKey] || '';
-
   modelSelect.innerHTML = cfg.models
     .map(m => `<option value="${m.value}"${m.value === selectedModel ? ' selected' : ''}>${m.label}</option>`)
     .join('');
 
-  // Default to provider's recommended model if none saved
   if (!selectedModel || !cfg.models.find(m => m.value === selectedModel)) {
     modelSelect.value = cfg.defaultModel;
+  }
+
+  if (isOllama) {
+    const base = (ollamaUrlInput.value || 'http://localhost:11434').replace(/\/$/, '');
+    fetch(`${base}/api/tags`)
+      .then(r => r.json())
+      .then(data => {
+        const names = (data.models || []).map(m => m.name);
+        if (!names.length) return;
+        modelSelect.innerHTML = names
+          .map(n => `<option value="${n}"${n === selectedModel ? ' selected' : ''}>${n}</option>`)
+          .join('');
+        if (!names.includes(modelSelect.value)) modelSelect.value = names[0];
+      })
+      .catch(() => {});
   }
 }
 
 // ── Load saved settings ───────────────────────────────────────────────────────
 
 chrome.storage.local.get(
-  ['provider', 'anthropicKey', 'geminiKey', 'groqKey', 'model', 'debugMode'],
+  ['provider', 'anthropicKey', 'geminiKey', 'ollamaUrl', 'model', 'debugMode'],
   (stored) => {
     keyCache.anthropic = stored.anthropicKey || '';
     keyCache.gemini    = stored.geminiKey    || '';
-    keyCache.groq      = stored.groqKey      || '';
+    ollamaUrlInput.value = stored.ollamaUrl  || '';
 
     const activeProvider = stored.provider || 'anthropic';
     providerSelect.value = activeProvider;
@@ -98,26 +119,29 @@ debugToggle.addEventListener('click', () => {
 // ── Provider switch ───────────────────────────────────────────────────────────
 
 providerSelect.addEventListener('change', () => {
-  // Save current key into cache before switching
-  keyCache[providerSelect.value] = keyInput.value;
+  if (providerSelect.value !== 'ollama') keyCache[providerSelect.value] = keyInput.value;
   applyProvider(providerSelect.value, null);
 });
 
 keyInput.addEventListener('input', () => {
-  keyCache[providerSelect.value] = keyInput.value;
+  if (providerSelect.value !== 'ollama') keyCache[providerSelect.value] = keyInput.value;
+});
+
+ollamaUrlInput.addEventListener('change', () => {
+  if (providerSelect.value === 'ollama') applyProvider('ollama', modelSelect.value);
 });
 
 // ── Save ──────────────────────────────────────────────────────────────────────
 
 saveBtn.addEventListener('click', () => {
   const provider = providerSelect.value;
-  keyCache[provider] = keyInput.value.trim();
+  if (provider !== 'ollama') keyCache[provider] = keyInput.value.trim();
 
   chrome.storage.local.set({
     provider,
     anthropicKey: keyCache.anthropic,
     geminiKey:    keyCache.gemini,
-    groqKey:      keyCache.groq,
+    ollamaUrl:    ollamaUrlInput.value.trim(),
     model:        modelSelect.value,
   }, () => {
     savedMsg.classList.add('visible');

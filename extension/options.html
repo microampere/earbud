@@ -68,11 +68,17 @@
     <select id="provider">
       <option value="anthropic">Anthropic Claude</option>
       <option value="gemini">Google Gemini ✦ free tier</option>
-      <option value="groq">Groq ✦ free tier</option>
+      <option value="ollama">Ollama ✦ local</option>
     </select>
   </div>
 
-  <div class="field">
+  <div class="field" id="ollama-url-field" style="display:none">
+    <label for="ollama-url">Ollama URL</label>
+    <input type="text" id="ollama-url" placeholder="http://localhost:11434" autocomplete="off" />
+    <p class="hint">Base URL of your Ollama server. Default: http://localhost:11434</p>
+  </div>
+
+  <div class="field" id="api-key-field">
     <label for="api-key" id="key-label">API Key</label>
     <input type="password" id="api-key" autocomplete="off" />
     <p class="hint" id="key-hint"></p>

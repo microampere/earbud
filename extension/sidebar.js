@@ -80,12 +80,13 @@ function showScreen(name) {
 // ── Init ──────────────────────────────────────────────────────────────────────
 
 async function init() {
-  const { provider, anthropicKey, geminiKey, groqKey, debugMode } = await chrome.storage.local.get(
-    ['provider', 'anthropicKey', 'geminiKey', 'groqKey', 'debugMode']
+  const { provider, anthropicKey, geminiKey, debugMode } = await chrome.storage.local.get(
+    ['provider', 'anthropicKey', 'geminiKey', 'debugMode']
   );
   setDebugMode(!!debugMode);
-  const keyMap = { anthropic: anthropicKey, gemini: geminiKey, groq: groqKey };
-  if (!keyMap[provider || 'anthropic']) { showScreen('nokey'); return; }
+  const activeProvider = provider || 'anthropic';
+  const keyMap = { anthropic: anthropicKey, gemini: geminiKey };
+  if (activeProvider !== 'ollama' && !keyMap[activeProvider]) { showScreen('nokey'); return; }
 
   // Restore live session if one is in progress
   const state = await chrome.storage.session.get(null);
@@ -143,7 +144,7 @@ function startLiveUI(context) {
   chrome.storage.session.get(['debugLog', 'suggestionsEnabled'], (s) => {
     console.log('[Sidebar] startLiveUI: debugLog entries:', s.debugLog?.length ?? 0);
     renderDebugLog(s.debugLog || []);
-    setSuggestionsEnabled(s.suggestionsEnabled !== false);
+    setSuggestionsEnabled(s.suggestionsEnabled === true);
   });
   chrome.storage.local.get(['debugMode'], ({ debugMode }) => setDebugMode(!!debugMode));
 }

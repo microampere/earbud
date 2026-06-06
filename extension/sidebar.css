@@ -24,7 +24,7 @@ body {
   flex-direction: column;
 }
 
-.screen { display: flex; flex-direction: column; height: 100%; }
+.screen { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 .hidden { display: none !important; }
 
 /* ── Empty / no-key state ─────────────────────────────────────────────── */
@@ -355,6 +355,27 @@ select {
 ::-webkit-scrollbar { width: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+/* Built-by footer */
+.built-by {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 5px 12px;
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+  color: var(--dim);
+  font-size: 10px;
+  letter-spacing: 0.03em;
+}
+
+.built-by-logo {
+  width: 20px;
+  height: 20px;
+  border-radius: 3px;
+  display: block;
+}
 
 /* Logo */
 .logo {

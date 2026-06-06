@@ -38,6 +38,7 @@ async function clearMeetingState() {
     lastCallTime: Date.now(),
     meetingContext: null,
     latestCaption: null,
+    suggestionsEnabled: false,
   });
 }
 
@@ -77,6 +78,7 @@ async function handleStart(context, systemPrompt) {
     lastCallTime: Date.now(),
     meetingContext: context,
     latestCaption: null,
+    suggestionsEnabled: false,
   });
 }
 
@@ -150,7 +152,7 @@ async function handleCaption(speaker, text) {
   const elapsedSecs = (now - lastCallTime) / 1000;
   if (wordsSinceLastCall >= TRIGGER_WORDS || elapsedSecs >= TRIGGER_SECS) {
     await patchState({ wordsSinceLastCall: 0, lastCallTime: now });
-    if (state.suggestionsEnabled !== false) {
+    if (state.suggestionsEnabled === true) {
       await callLLM(state.systemPrompt, transcript);
     }
   }
@@ -160,13 +162,13 @@ async function handleCaption(speaker, text) {
 
 async function callLLM(systemPrompt, transcript) {
   const settings = await chrome.storage.local.get([
-    'provider', 'anthropicKey', 'geminiKey', 'groqKey', 'model',
+    'provider', 'anthropicKey', 'geminiKey', 'model', 'ollamaUrl',
   ]);
   const provider = settings.provider || 'anthropic';
-  const keyMap = { anthropic: settings.anthropicKey, gemini: settings.geminiKey, groq: settings.groqKey };
+  const keyMap = { anthropic: settings.anthropicKey, gemini: settings.geminiKey };
   const key = keyMap[provider];
 
-  if (!key) {
+  if (provider !== 'ollama' && !key) {
     await patchState({ status: 'No API key — open Settings' });
     return;
   }
@@ -182,7 +184,7 @@ async function callLLM(systemPrompt, transcript) {
     let text = '';
     if (provider === 'anthropic') text = await callAnthropic(key, settings.model, systemPrompt, userMsg);
     if (provider === 'gemini')    text = await callGemini(key, settings.model, systemPrompt, userMsg);
-    if (provider === 'groq')      text = await callGroq(key, settings.model, systemPrompt, userMsg);
+    if (provider === 'ollama')    text = await callOllama(settings.model, systemPrompt, userMsg, settings.ollamaUrl);
 
     const newQuestions = text.split('\n').map(l => l.trim()).filter(l => l.startsWith('→'));
     if (newQuestions.length > 0) {
@@ -238,15 +240,13 @@ async function callGemini(key, model, systemPrompt, userMsg) {
   return data.candidates?.[0]?.content?.parts?.[0]?.text || '';
 }
 
-async function callGroq(key, model, systemPrompt, userMsg) {
-  const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+async function callOllama(model, systemPrompt, userMsg, baseUrl) {
+  const url = (baseUrl || 'http://localhost:11434').replace(/\/$/, '');
+  const res = await fetch(`${url}/v1/chat/completions`, {
     method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      'authorization': `Bearer ${key}`,
-    },
+    headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
-      model: model || 'llama-3.3-70b-versatile',
+      model: model || 'mistral:7b',
       max_tokens: 512,
       messages: [
         { role: 'system', content: systemPrompt },

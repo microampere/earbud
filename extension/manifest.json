@@ -9,7 +9,7 @@
     "https://*.zoom.us/*",
     "https://api.anthropic.com/*",
     "https://generativelanguage.googleapis.com/*",
-    "https://api.groq.com/*"
+    "http://localhost:*/*"
   ],
   "background": {
     "service_worker": "background.js"
